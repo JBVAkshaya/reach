@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="alpha_5">
+    <xacro:arg name="initial_positions_file" default="initial_positions.yaml" />
+
+    <!-- Import alpha_5 urdf file -->
+    <xacro:include filename="$(find reach_description)/description/alpha_5/urdf/alpha_5_standard_jaws.urdf" />
+
+    <!-- Import control_xacro -->
+    <xacro:include filename="alpha_5.ros2_control.xacro" />
+
+
+    <xacro:alpha_5_ros2_control name="FakeSystem" initial_positions_file="$(arg initial_positions_file)"/>
+
+</robot>
