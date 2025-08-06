@@ -200,7 +200,7 @@ def generate_launch_description() -> LaunchDescription:
     robot_hand_controller_spawner = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=["hand_controller"],
+        arguments=["grip_action_controller"],
         parameters=[{"use_sim_time": use_sim}],
     )
 
