@@ -1,11 +1,11 @@
 import os
 
-import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     IncludeLaunchDescription,
+    OpaqueFunction,
     RegisterEventHandler,
 )
 from launch.conditions import IfCondition, UnlessCondition
@@ -17,38 +17,25 @@ from launch_ros.substitutions import FindPackageShare
 from moveit_configs_utils import MoveItConfigsBuilder
 
 
-def generate_launch_description() -> LaunchDescription:
-    args = [
-        DeclareLaunchArgument("controllers_file"),
-        DeclareLaunchArgument("robot_controller"),
-        DeclareLaunchArgument("tcp_controller"),
-        DeclareLaunchArgument("use_sim"),
-        DeclareLaunchArgument("use_rviz"),
-        DeclareLaunchArgument("robot_description"),
-        DeclareLaunchArgument("gz_model_name"),
-        DeclareLaunchArgument("gz_world_file"),
-        DeclareLaunchArgument("rviz_config"),
-    ]
-
+def config_setup(context):
+    use_sim_time = LaunchConfiguration("use_sim")
+    use_rviz = LaunchConfiguration("use_rviz")
+    rviz_config_file = LaunchConfiguration("rviz_config_file")
+    rviz_config_package = LaunchConfiguration("rviz_config_package")
     use_sim = LaunchConfiguration("use_sim")
     robot_description = LaunchConfiguration("robot_description")
-
-    robot_state_publisher = Node(
-        package="robot_state_publisher",
-        executable="robot_state_publisher",
-        output="both",
-        parameters=[{"robot_description": robot_description, "use_sim_time": use_sim}],
+    robot_name_str = LaunchConfiguration("robot_name").perform(context)
+    package_name_moveit_config = LaunchConfiguration("rviz_config_package").perform(
+        context
     )
+    use_moveit = LaunchConfiguration("use_moveit")
 
-    robot_name_str = "alpha_5"
-
-    # Get package path
-    pkg_share_moveit_config_temp = FindPackageShare(package="reach_moveit_config")
-    pkg_share_moveit_config = pkg_share_moveit_config_temp.find("reach_moveit_config")
-
-    # Construct file paths using robot name string
+    pkg_share_moveit_config = FindPackageShare(
+        package=package_name_moveit_config
+    ).perform(context)
     config_path = os.path.join(pkg_share_moveit_config, "config", robot_name_str)
 
+    # Define all config file paths
     initial_positions_file_path = os.path.join(config_path, "initial_positions.yaml")
     joint_limits_file_path = os.path.join(config_path, "joint_limits.yaml")
     kinematics_file_path = os.path.join(config_path, "kinematics.yaml")
@@ -60,7 +47,10 @@ def generate_launch_description() -> LaunchDescription:
 
     # Create MoveIt configuration
     moveit_config = (
-        MoveItConfigsBuilder(robot_name_str, package_name="reach_moveit_config")
+        MoveItConfigsBuilder(
+            robot_name_str,
+            package_name=package_name_moveit_config,
+        )
         .trajectory_execution(file_path=moveit_controllers_file_path)
         .robot_description_semantic(file_path=srdf_model_path)
         .joint_limits(file_path=joint_limits_file_path)
@@ -83,46 +73,43 @@ def generate_launch_description() -> LaunchDescription:
         "capabilities": "move_group/ExecuteTaskSolutionCapability"
     }
 
-    with open(initial_positions_file_path, "r") as f:
-        initial_positions = yaml.safe_load(f)
-
-    start_move_group_node_cmd = Node(
+    move_group_spawner = Node(
+        condition=IfCondition(use_moveit),
         package="moveit_ros_move_group",
         executable="move_group",
         output="screen",
         parameters=[
             moveit_config.to_dict(),
-            {"use_sim_time": True},
-            {"start_state": initial_positions},
+            {"use_sim_time": use_sim},
+            {"start_state": {"content": initial_positions_file_path}},
             move_group_capabilities,
         ],
     )
-    # # Create move_group node
-    # start_move_group_node_cmd = Node(
-    #     package="moveit_ros_move_group",
-    #     executable="move_group",
-    #     output="screen",
-    #     parameters=[
-    #         moveit_config.to_dict(),
-    #         {"use_sim_time": True},
-    #         {"start_state": {"content": initial_positions_file_path}},
-    #         move_group_capabilities,
-    #     ],
-    # )
 
     rviz_spawner = Node(
+        condition=IfCondition(use_rviz),
         package="rviz2",
         executable="rviz2",
-        arguments=["-d", LaunchConfiguration("rviz_config")],
+        arguments=[
+            "-d",
+            [FindPackageShare(rviz_config_package), "/rviz/", rviz_config_file],
+        ],
+        output="screen",
         parameters=[
             moveit_config.robot_description,
             moveit_config.robot_description_semantic,
             moveit_config.planning_pipelines,
             moveit_config.robot_description_kinematics,
             moveit_config.joint_limits,
-            {"use_sim_time": use_sim},
+            {"use_sim_time": use_sim_time},
         ],
-        condition=IfCondition(LaunchConfiguration("use_rviz")),
+    )
+
+    robot_state_publisher = Node(
+        package="robot_state_publisher",
+        executable="robot_state_publisher",
+        output="both",
+        parameters=[{"robot_description": robot_description, "use_sim_time": use_sim}],
     )
 
     # Gazebo launch
@@ -197,17 +184,10 @@ def generate_launch_description() -> LaunchDescription:
         parameters=[{"use_sim_time": use_sim}],
     )
 
-    robot_hand_controller_spawner = Node(
+    robot_gripper_controller_spawner = Node(
         package="controller_manager",
         executable="spawner",
         arguments=["grip_action_controller"],
-        parameters=[{"use_sim_time": use_sim}],
-    )
-
-    tcp_controller_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=[LaunchConfiguration("tcp_controller")],
         parameters=[{"use_sim_time": use_sim}],
     )
 
@@ -240,17 +220,16 @@ def generate_launch_description() -> LaunchDescription:
     delay_robot_hand_controller_spawner_after_robot_ac_spawner = RegisterEventHandler(
         event_handler=OnProcessExit(
             target_action=robot_arm_controller_spawner,
-            on_exit=[robot_hand_controller_spawner],
+            on_exit=[robot_gripper_controller_spawner],
         ),
     )
 
-    # Delay start of tcp_controller after `joint_state_broadcaster`
-    # delay_tcp_controller_spawners_after_jsb_spawner = RegisterEventHandler(
-    #     event_handler=OnProcessExit(
-    #         target_action=joint_state_broadcaster_spawner,
-    #         on_exit=[tcp_controller_spawner],
-    #     ),
-    # )
+    delay_move_group_after_robot_gripper_controller_spawner = RegisterEventHandler(
+        event_handler=OnProcessExit(
+            target_action=robot_gripper_controller_spawner,
+            on_exit=[move_group_spawner],
+        ),
+    )
 
     nodes = [
         controller_manager,
@@ -258,12 +237,31 @@ def generate_launch_description() -> LaunchDescription:
         gz_bridge,
         gz_spawner,
         gz_launch,
-        # start_move_group_node_cmd,
-        # rviz_spawner,
         delay_jsb_spawner_after_controller_manager,
         delay_jsb_spawner_after_spawn_entity,
         delay_robot_arm_spawners_after_jsb_spawner,
         delay_robot_hand_controller_spawner_after_robot_ac_spawner,
+        delay_move_group_after_robot_gripper_controller_spawner,
+        rviz_spawner,
+    ]
+    return nodes
+
+
+def generate_launch_description() -> LaunchDescription:
+    args = [
+        DeclareLaunchArgument("controllers_file"),
+        DeclareLaunchArgument("robot_controller"),
+        DeclareLaunchArgument("tcp_controller"),
+        DeclareLaunchArgument("use_sim"),
+        DeclareLaunchArgument("use_rviz"),
+        DeclareLaunchArgument("robot_description"),
+        DeclareLaunchArgument("gz_model_name"),
+        DeclareLaunchArgument("gz_world_file"),
+        DeclareLaunchArgument("rviz_config"),
+        DeclareLaunchArgument("use_moveit"),
+        DeclareLaunchArgument("robot_name"),
+        DeclareLaunchArgument("rviz_config_file"),
+        DeclareLaunchArgument("rviz_config_package"),
     ]
 
-    return LaunchDescription(args + nodes)
+    return LaunchDescription(args + [OpaqueFunction(function=config_setup)])

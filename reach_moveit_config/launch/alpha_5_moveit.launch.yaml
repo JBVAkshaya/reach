@@ -64,8 +64,28 @@ launch:
       default: "empty.sdf"
       description: "The Gazebo world file."
 
+  - arg:
+      name: "robot_name"
+      default: "alpha_5"
+      description: "Name of the robot to use"
+
+  - arg:
+      name: "rviz_config_package"
+      default: "reach_moveit_config"
+      description: "Package containing the RViz configuration file"
+
+  - arg:
+      name: use_moveit
+      default: "true"
+      description: "Set to true if you would like to use moveit"
+
+  - arg:
+      name: rviz_config_file
+      default: "move_group.rviz"
+      description: "MoveIt configuration file for rviz"
+
   - include:
-      file: $(find-pkg-share reach_moveit_config)/launch/move_group.launch.py
+      file: $(find-pkg-share reach_moveit_config)/launch/move_group_ensemble.launch.py
       arg:
         - name: controllers_file
           value: $(var controllers_file)
@@ -85,3 +105,11 @@ launch:
           value: $(var gz_world_file)
         - name: rviz_config
           value: $(var rviz_config)
+        - name: use_moveit
+          value: $(var use_moveit)
+        - name: robot_name
+          value: $(var robot_name)
+        - name: rviz_config_package
+          value: $(var rviz_config_package)
+        - name: rviz_config_file
+          value: $(var rviz_config_file)
